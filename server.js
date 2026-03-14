@@ -5,7 +5,17 @@ require("dotenv").config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY);
-app.use(cors({ origin: ["https://leads.fortitudecreative.com", "http://localhost:3000"], credentials: true }));
+
+app.use(cors({
+  origin: function(origin, callback) {
+    if (!origin || origin.endsWith(".vercel.app") || origin === "https://leads.fortitudecreative.com" || origin === "http://localhost:3000") {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true
+}));
 app.use(express.json({ limit: "10mb" }));
 
 const requireAuth = async (req, res, next) => {
@@ -58,9 +68,7 @@ app.post("/api/snitcher-webhook", async (req, res) => {
 app.get("/api/leads", requireAuth, async (req, res) => {
   try {
     const { source, limit = 100, offset = 0 } = req.query;
-    let q = supabase.from("leads").select("*")
-      .order("created_at", { ascending: false })
-      .range(Number(offset), Number(offset) + Number(limit) - 1);
+    let q = supabase.from("leads").select("*").order("created_at", { ascending: false }).range(Number(offset), Number(offset) + Number(limit) - 1);
     if (source && source !== "all") q = q.eq("source", source);
     const { data, error } = await q;
     if (error) throw error;
