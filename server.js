@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const axios = require("axios");
 const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
 const app = express();
@@ -28,21 +29,34 @@ const requireAuth = async (req, res, next) => {
   next();
 };
 
+async function sendTelegram(msg) {
+  try {
+    await axios.post("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/sendMessage", {
+      chat_id: process.env.TELEGRAM_CHAT_ID,
+      text: msg
+    });
+  } catch (e) {
+    console.error("Telegram error:", e.message);
+  }
+}
+
 app.get("/health", (req, res) => res.json({ status: "ok", ts: Date.now() }));
 
 app.post("/api/rb2b-webhook", async (req, res) => {
   try {
     const p = req.body;
     const name = ((p.first_name || "") + " " + (p.last_name || "")).trim() || null;
-    const { error } = await supabase.from("leads").insert({
-      source: "rb2b", name,
-      company: p.company_name || p.employer || null,
-      title: p.job_title || p.title || null,
-      linkedin_url: p.linkedin_url || p.profile_url || null,
-      page_url: p.page_url || p.current_url || null,
-      raw_payload: p
-    });
+    const company = p.company_name || p.employer || null;
+    const title = p.job_title || p.title || null;
+    const linkedin_url = p.linkedin_url || p.profile_url || null;
+    const page_url = p.page_url || p.current_url || null;
+
+    const { error } = await supabase.from("leads").insert({ source: "rb2b", name, company, title, linkedin_url, page_url, raw_payload: p });
     if (error) throw error;
+
+    const msg = "🔔 New Visitor Identified\n👤 " + (name || "Unknown") + "\n🏢 " + (company || "") + "\n💼 " + (title || "") + (linkedin_url ? "\n🔗 " + linkedin_url : "") + (page_url ? "\n📄 " + page_url : "");
+    await sendTelegram(msg);
+
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -52,6 +66,7 @@ app.post("/api/snitcher-webhook", async (req, res) => {
     const v = req.body?.visitor || req.body;
     const c = v?.company || v;
     const s = v?.session || {};
+
     const { error } = await supabase.from("leads").insert({
       source: "snitcher",
       company: c?.name || null, domain: c?.domain || null,
@@ -61,6 +76,19 @@ app.post("/api/snitcher-webhook", async (req, res) => {
       landing_page: s?.landing_page || null, raw_payload: req.body
     });
     if (error) throw error;
+
+    const name = c?.name || "Unknown Company";
+    const domain = c?.domain ? " (" + c.domain + ")" : "";
+    const industry = c?.industry ? "\n🏭 " + c.industry : "";
+    const employees = c?.employees ? " | " + c.employees + " employees" : "";
+    const country = c?.country ? "\n🌎 " + c.country : "";
+    const pages = s?.pages_viewed ? "\n📄 " + s.pages_viewed + " pages" : "";
+    const duration = s?.duration ? " | " + Math.round(s.duration / 60) + " min" : "";
+    const source = s?.source ? " | via " + s.source : "";
+    const landing = s?.landing_page ? "\n🛬 " + s.landing_page : "";
+    const msg = "🏢 New Company Identified\n" + name + domain + industry + employees + country + pages + duration + source + landing;
+    await sendTelegram(msg);
+
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
