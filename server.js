@@ -3,9 +3,22 @@ const cors = require("cors");
 const axios = require("axios");
 const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
+
 const app = express();
 const PORT = process.env.PORT || 3001;
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY);
+
+// Config - values loaded from Railway env vars
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+  console.error("FATAL: SUPABASE_URL and SUPABASE_SECRET_KEY env vars required");
+  process.exit(1);
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 
 app.use(cors({
   origin: function(origin, callback) {
@@ -30,9 +43,10 @@ const requireAuth = async (req, res, next) => {
 };
 
 async function sendTelegram(msg) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
   try {
-    await axios.post("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/sendMessage", {
-      chat_id: process.env.TELEGRAM_CHAT_ID,
+    await axios.post("https://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage", {
+      chat_id: TELEGRAM_CHAT_ID,
       text: msg
     });
   } catch (e) {
@@ -54,11 +68,12 @@ app.post("/api/rb2b-webhook", async (req, res) => {
     const { error } = await supabase.from("leads").insert({ source: "rb2b", name, company, title, linkedin_url, page_url, raw_payload: p });
     if (error) throw error;
 
-    const msg = "🔔 New Visitor Identified\n👤 " + (name || "Unknown") + "\n🏢 " + (company || "") + "\n💼 " + (title || "") + (linkedin_url ? "\n🔗 " + linkedin_url : "") + (page_url ? "\n📄 " + page_url : "");
-    await sendTelegram(msg);
-
+    await sendTelegram("RB2B - New Visitor\n" + (name || "Unknown") + "\n" + (company || "") + (title ? "\n" + title : "") + (linkedin_url ? "\n" + linkedin_url : "") + (page_url ? "\n" + page_url : ""));
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error("RB2B error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post("/api/snitcher-webhook", async (req, res) => {
@@ -77,20 +92,12 @@ app.post("/api/snitcher-webhook", async (req, res) => {
     });
     if (error) throw error;
 
-    const name = c?.name || "Unknown Company";
-    const domain = c?.domain ? " (" + c.domain + ")" : "";
-    const industry = c?.industry ? "\n🏭 " + c.industry : "";
-    const employees = c?.employees ? " | " + c.employees + " employees" : "";
-    const country = c?.country ? "\n🌎 " + c.country : "";
-    const pages = s?.pages_viewed ? "\n📄 " + s.pages_viewed + " pages" : "";
-    const duration = s?.duration ? " | " + Math.round(s.duration / 60) + " min" : "";
-    const source = s?.source ? " | via " + s.source : "";
-    const landing = s?.landing_page ? "\n🛬 " + s.landing_page : "";
-    const msg = "🏢 New Company Identified\n" + name + domain + industry + employees + country + pages + duration + source + landing;
-    await sendTelegram(msg);
-
+    await sendTelegram("Snitcher - New Company\n" + (c?.name || "Unknown") + (c?.domain ? " (" + c.domain + ")" : "") + (c?.industry ? "\n" + c.industry : "") + (c?.employees ? " - " + c.employees : "") + (c?.country ? "\n" + c.country : "") + (s?.pages_viewed ? "\n" + s.pages_viewed + " pages" : "") + (s?.duration ? " - " + Math.round(s.duration / 60) + " min" : "") + (s?.source ? " via " + s.source : "") + (s?.landing_page ? "\n" + s.landing_page : ""));
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error("Snitcher error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get("/api/leads", requireAuth, async (req, res) => {
@@ -101,7 +108,9 @@ app.get("/api/leads", requireAuth, async (req, res) => {
     const { data, error } = await q;
     if (error) throw error;
     res.json({ leads: data });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.listen(PORT, () => console.log("Fortitude Leads backend on port " + PORT));
