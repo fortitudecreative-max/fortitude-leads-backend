@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
+const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
 
@@ -12,9 +13,16 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const WEBHOOK_SECRET_RB2B = process.env.WEBHOOK_SECRET_RB2B;
+const WEBHOOK_SECRET_SNITCHER = process.env.WEBHOOK_SECRET_SNITCHER;
 
 if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
   console.error("FATAL: SUPABASE_URL and SUPABASE_SECRET_KEY env vars required");
+  process.exit(1);
+}
+
+if (!WEBHOOK_SECRET_RB2B || !WEBHOOK_SECRET_SNITCHER) {
+  console.error("FATAL: WEBHOOK_SECRET_RB2B and WEBHOOK_SECRET_SNITCHER env vars required. Set both in Railway and configure each provider's dashboard to send the matching value in the X-Webhook-Secret header.");
   process.exit(1);
 }
 
@@ -42,6 +50,19 @@ const requireAuth = async (req, res, next) => {
   next();
 };
 
+// Webhook secret middleware. Provider configures its dashboard to send the
+// matching value in the X-Webhook-Secret header. Timing-safe compare.
+const requireWebhookSecret = (expected) => (req, res, next) => {
+  const got = req.headers["x-webhook-secret"];
+  if (!got || typeof got !== "string") return res.status(401).json({ error: "Missing webhook secret" });
+  const a = Buffer.from(got);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.status(401).json({ error: "Invalid webhook secret" });
+  }
+  next();
+};
+
 async function sendTelegram(msg) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
   try {
@@ -56,7 +77,7 @@ async function sendTelegram(msg) {
 
 app.get("/health", (req, res) => res.json({ status: "ok", ts: Date.now() }));
 
-app.post("/api/rb2b-webhook", async (req, res) => {
+app.post("/api/rb2b-webhook", requireWebhookSecret(WEBHOOK_SECRET_RB2B), async (req, res) => {
   try {
     const p = req.body;
     console.log("[RB2B] Received payload:", JSON.stringify(p).substring(0, 500));
@@ -79,7 +100,7 @@ app.post("/api/rb2b-webhook", async (req, res) => {
   }
 });
 
-app.post("/api/snitcher-webhook", async (req, res) => {
+app.post("/api/snitcher-webhook", requireWebhookSecret(WEBHOOK_SECRET_SNITCHER), async (req, res) => {
   try {
     const body = req.body;
     console.log("[Snitcher] Received payload:", JSON.stringify(body).substring(0, 500));
